@@ -1,4 +1,4 @@
-﻿#include "tcpclient.h"
+#include "tcpclient.h"
 #include "messagemodel.h"
 #include <QAbstractSocket>
 #include <QJsonDocument>
@@ -48,45 +48,45 @@ void TcpClient::onErrorOccurred(QAbstractSocket::SocketError socketError) {
 }
 
 void TcpClient::sendJson(const QJsonObject& obj) {
-    QString t = obj.value("type").toString();
-    if (t == "message") {
+    QString messageType = obj.value("type").toString();
+    if (messageType == "message") {
         QString text = obj.value("text").toString();
         if (model) model->addMessage("me", text, QDateTime::currentDateTime());
-    } else if (t == "login") {
+    } else if (messageType == "login") {
         gCurrentUser = obj.value("username").toString();
-    } else if (t == "logout") {
+    } else if (messageType == "logout") {
         gCurrentUser.clear();
     }
 
-    QJsonDocument d(obj);
-    QByteArray payload = d.toJson(QJsonDocument::Compact);
+    QJsonDocument jsonDocument(obj);
+    QByteArray payload = jsonDocument.toJson(QJsonDocument::Compact);
     QByteArray frame;
-    QDataStream ds(&frame, QIODevice::WriteOnly);
-    ds.setByteOrder(QDataStream::BigEndian);
-    ds << static_cast<quint32>(payload.size());
+    QDataStream dataStream(&frame, QIODevice::WriteOnly);
+    dataStream.setByteOrder(QDataStream::BigEndian);
+    dataStream << static_cast<quint32>(payload.size());
     frame.append(payload);
     socket_.write(frame);
 }
 
 void TcpClient::onReadyRead() {
     QByteArray chunk = socket_.readAll();
-    buffer_.append(chunk);
-    while (buffer_.size() >= 4) {
-        QDataStream ds(buffer_);
-        ds.setByteOrder(QDataStream::BigEndian);
-        quint32 len = 0;
-        ds >> len;
-        if (buffer_.size() < 4 + static_cast<int>(len)) break;
-        QByteArray payload = buffer_.mid(4, len);
-        buffer_.remove(0, 4 + len);
-        processFrame(payload);
+    receiveBuffer_.append(chunk);
+    while (receiveBuffer_.size() >= 4) {
+        QDataStream dataStream(receiveBuffer_);
+        dataStream.setByteOrder(QDataStream::BigEndian);
+        quint32 frameLength = 0;
+        dataStream >> frameLength;
+        if (receiveBuffer_.size() < 4 + static_cast<int>(frameLength)) break;
+        QByteArray framePayload = receiveBuffer_.mid(4, frameLength);
+        receiveBuffer_.remove(0, 4 + frameLength);
+        processFrame(framePayload);
     }
 }
 
 void TcpClient::processFrame(const QByteArray& payload) {
-    QJsonDocument d = QJsonDocument::fromJson(payload);
-    if (!d.isObject()) return;
-    QJsonObject obj = d.object();
+    QJsonDocument jsonDocument = QJsonDocument::fromJson(payload);
+    if (!jsonDocument.isObject()) return;
+    QJsonObject obj = jsonDocument.object();
     QString type = obj.value("type").toString();
 
     if (type == "message" || type == "private") {
@@ -94,7 +94,7 @@ void TcpClient::processFrame(const QByteArray& payload) {
         QString text = obj.value("text").toString();
         qint64 ts = obj.value("ts").toVariant().toLongLong();
         QDateTime dt = QDateTime::fromMSecsSinceEpoch(ts ? ts : QDateTime::currentMSecsSinceEpoch());
-        // Only show one message: when receiving an echo from server, don't add again if it's sent by self
+        // Only show one message: when receiving an echo from server, don'messageType add again if it's sent by self
         if (from != gCurrentUser && model) model->addMessage(from, text, dt);
         emit messageReceived(from, text, dt.toMSecsSinceEpoch());
     } else if (type == "login_result" || type == "register_result") {
@@ -116,10 +116,10 @@ void TcpClient::processFrame(const QByteArray& payload) {
     } else if (type == "pong") {
         // Ignore
     } else if (obj.contains("users") && obj.value("users").isArray()) {
-        QJsonArray arr = obj.value("users").toArray();
-        QStringList list;
-        for (const QJsonValue& v : arr) list << v.toString();
-        emit onlineUsersUpdated(list);
+        QJsonArray userArray = obj.value("users").toArray();
+        QStringList usernamesList;
+        for (const QJsonValue& v : userArray) usernamesList << v.toString();
+        emit onlineUsersUpdated(usernamesList);
     }
 }
 
