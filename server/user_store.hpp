@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <unordered_map>
 #include <mutex>
@@ -10,6 +10,6 @@ public:
     bool check_login(const std::string& username, const std::string& password);
 
 private:
-    std::mutex mtx_;
-    std::unordered_map<std::string, std::string> users_;
+    std::mutex users_mutex_;
+    std::unordered_map<std::string, std::string> user_password_map_;
 };
