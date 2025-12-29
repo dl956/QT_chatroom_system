@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <QAbstractListModel>
 #include <QDateTime>
 
@@ -21,5 +21,5 @@ public:
     Q_INVOKABLE void addMessage(const QString& sender, const QString& text, const QDateTime& time);
 
 private:
-    QList<ChatItem> items_;
+    QList<ChatItem> chat_items_;
 };
