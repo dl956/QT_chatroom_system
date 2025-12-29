@@ -1,4 +1,4 @@
-﻿// session.cpp
+// session.cpp
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -53,7 +53,7 @@ void Session::do_read_header() {
     asio::async_read(socket_, asio::buffer(header_buf_), [this, self](std::error_code ec, std::size_t) {
         if (ec) {
             server_.on_disconnect(self);
-            Logger::instance().info("Session read header error/disconnect", { {"ec", ec.message()}, {"user", username_} });
+            Logger::instance().info("Session read header error/disconnect", { {"ec", ec.message()}, {"user", session_username_} });
             return;
         }
         uint32_t len = parse_length(header_buf_);
@@ -63,19 +63,19 @@ void Session::do_read_header() {
 }
 
 void Session::do_read_body(uint32_t body_len) {
-    body_buf_.assign(body_len, 0);
+    message_body_buffer_.assign(body_len, 0);
     auto self = shared_from_this();
-    asio::async_read(socket_, asio::buffer(body_buf_), [this, self](std::error_code ec, std::size_t) {
+    asio::async_read(socket_, asio::buffer(message_body_buffer_), [this, self](std::error_code ec, std::size_t) {
         if (ec) {
             server_.on_disconnect(self);
-            Logger::instance().info("Session read body error/disconnect", { {"ec", ec.message()}, {"user", username_} });
+            Logger::instance().info("Session read body error/disconnect", { {"ec", ec.message()}, {"user", session_username_} });
             return;
         }
-        std::string s(body_buf_.begin(), body_buf_.end());
+        std::string s(message_body_buffer_.begin(), message_body_buffer_.end());
 
         // Log a redacted/preview copy of the JSON so we can see content without exposing passwords
         json redacted = redact_for_logging(s);
-        Logger::instance().debug("Received JSON", { {"from", username_}, {"json_len", static_cast<uint64_t>(s.size())}, {"payload", redacted} });
+        Logger::instance().debug("Received JSON", { {"from", session_username_}, {"json_len", static_cast<uint64_t>(s.size())}, {"payload", redacted} });
 
         try {
             json j = json::parse(s);
@@ -90,7 +90,7 @@ void Session::do_read_body(uint32_t body_len) {
 void Session::process_message(const json& j) {
     // message types: register, login, message, private, history, heartbeat, list_users
     std::string type = j.value("type", "");
-    Logger::instance().debug("Processing message", { {"type", type}, {"user", username_} });
+    Logger::instance().debug("Processing message", { {"type", type}, {"user", session_username_} });
 
     if (type == "register") {
         std::string user = j.value("username", "");
@@ -114,7 +114,7 @@ void Session::process_message(const json& j) {
             r["reason"] = "invalid";
             Logger::instance().warn("Login failed", { {"username", user}, {"reason", "invalid"} });
         } else {
-            username_ = user;
+            session_username_ = user;
             server_.on_login(shared_from_this(), user);
             Logger::instance().info("Login success", { {"username", user} });
 			r["username"] = user;
@@ -123,7 +123,7 @@ void Session::process_message(const json& j) {
         deliver(r.dump());
         if (ok) {
             // send recent history
-            auto hs = server_.message_store().for_user(user, 100);
+            auto hs = server_.message_store().get_messages_for_user(user, 100);
             for (auto& m : hs) {
                 json mj = {
                     {"type", m.to.empty() ? "message" : "private"},
@@ -138,7 +138,7 @@ void Session::process_message(const json& j) {
 
     } else if (type == "message") {
         // Reject messages from not-logged-in sessions
-        if (username_.empty()) {
+        if (session_username_.empty()) {
             json err = { {"type", "error"}, {"error", "not_logged_in"} };
             deliver(err.dump());
             Logger::instance().warn("Message rejected - not logged in");
@@ -148,8 +148,8 @@ void Session::process_message(const json& j) {
         std::string text = j.value("text", "");
         uint64_t ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
-        ChatMsg cm{ username_, "", text, ts };
-        server_.message_store().push(cm);
+        ChatMsg cm{ session_username_, "", text, ts };
+        server_.message_store().add_message(cm);
 
         // broadcast to all INCLUDING sender (so sender will also receive the canonical message)
         json mj = { {"type","message"}, {"from", cm.from}, {"text", cm.text}, {"ts", cm.ts} };
@@ -161,7 +161,7 @@ void Session::process_message(const json& j) {
 
     } else if (type == "private") {
         // Reject private message if not logged in
-        if (username_.empty()) {
+        if (session_username_.empty()) {
             json err = { {"type", "error"}, {"error", "not_logged_in"} };
             deliver(err.dump());
             Logger::instance().warn("Private message rejected - not logged in");
@@ -172,8 +172,8 @@ void Session::process_message(const json& j) {
         std::string text = j.value("text", "");
         uint64_t ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
-        ChatMsg cm{ username_, to, text, ts };
-        server_.message_store().push(cm);
+        ChatMsg cm{ session_username_, to, text, ts };
+        server_.message_store().add_message(cm);
 
         json mj = { {"type","private"}, {"from", cm.from}, {"to", cm.to}, {"text", cm.text}, {"ts", cm.ts} };
         server_.send_to_user(to, mj.dump());
@@ -189,7 +189,7 @@ void Session::process_message(const json& j) {
 
     } else if (type == "history") {
         size_t n = j.value("n", 50);
-        auto hs = server_.message_store().for_user(username_, n);
+        auto hs = server_.message_store().get_messages_for_user(session_username_, n);
         for (auto& m : hs) {
             json mj = {
                 {"type", m.to.empty() ? "message" : "private"},
@@ -210,7 +210,7 @@ void Session::process_message(const json& j) {
         deliver(r.dump());
 
     } else if (type == "logout") {
-        Logger::instance().info("User requested logout", { {"username", username_} });
+        Logger::instance().info("User requested logout", { {"username", session_username_} });
         socket_.close();
         return;
     } else {
@@ -220,22 +220,22 @@ void Session::process_message(const json& j) {
 
 void Session::deliver(const std::string& json_text) {
     auto frame = make_frame(json_text);
-    bool writing = !write_queue_.empty();
-    write_queue_.push_back(std::move(frame));
+    bool writing = !outgoing_message_queue_.empty();
+    outgoing_message_queue_.push_back(std::move(frame));
     if (!writing) do_write();
 }
 
 void Session::do_write() {
     auto self = shared_from_this();
-    boost::asio::async_write(socket_, boost::asio::buffer(write_queue_.front()), [this, self](std::error_code ec, std::size_t) {
+    boost::asio::async_write(socket_, boost::asio::buffer(outgoing_message_queue_.front()), [this, self](std::error_code ec, std::size_t) {
         if (ec) {
             server_.on_disconnect(self);
-            Logger::instance().info("Session write error/disconnect", { {"ec", ec.message()}, {"user", username_} });
+            Logger::instance().info("Session write error/disconnect", { {"ec", ec.message()}, {"user", session_username_} });
             return;
         }
-        write_queue_.pop_front();
-        if (!write_queue_.empty()) do_write();
+        outgoing_message_queue_.pop_front();
+        if (!outgoing_message_queue_.empty()) do_write();
     });
 }
 
-std::string Session::username() const { return username_; }
+std::string Session::username() const { return session_username_; }
