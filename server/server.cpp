@@ -1,4 +1,4 @@
-﻿// server.cpp
+// server.cpp
 // Windows socket headers should come before other network includes to avoid macro/definition conflicts
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -36,9 +36,9 @@ void Server::run_accept() {
 
 void Server::on_login(std::shared_ptr<Session> sess, const std::string& username) {
 	{
-		std::lock_guard<std::mutex> lk(mtx_);
-		online_[username] = sess;
-		Logger::instance().info("User logged in", { {"username", username}, {"online_count", static_cast<uint64_t>(online_.size())} });
+		std::lock_guard<std::mutex> lk(online_users_mutex_);
+		online_user_sessions_[username] = sess;
+		Logger::instance().info("User logged in", { {"username", username}, {"online_count", static_cast<uint64_t>(online_user_sessions_.size())} });
 	}
 	// broadcast updated user list to everyone
     broadcast_user_list();
@@ -46,11 +46,11 @@ void Server::on_login(std::shared_ptr<Session> sess, const std::string& username
 
 void Server::on_disconnect(std::shared_ptr<Session> sess) {
 	{
-		std::lock_guard<std::mutex> lk(mtx_);
-		for (auto it = online_.begin(); it != online_.end();) {
+		std::lock_guard<std::mutex> lk(online_users_mutex_);
+		for (auto it = online_user_sessions_.begin(); it != online_user_sessions_.end();) {
 			if (it->second == sess) {
 				Logger::instance().info("User disconnected", { {"username", it->first} });
-				it = online_.erase(it);
+				it = online_user_sessions_.erase(it);
 			} else ++it;
 		}
 	}
@@ -59,17 +59,17 @@ void Server::on_disconnect(std::shared_ptr<Session> sess) {
 }
 
 void Server::broadcast(const std::string& json_text, std::shared_ptr<Session> except) {
-    std::lock_guard<std::mutex> lk(mtx_);
+    std::lock_guard<std::mutex> lk(online_users_mutex_);
     Logger::instance().debug("Broadcasting message", { {"len", static_cast<uint64_t>(json_text.size())}, {"except", except ? except->username() : ""} });
-    for (auto& kv : online_) {
+    for (auto& kv : online_user_sessions_) {
         if (kv.second != except) kv.second->deliver(json_text);
     }
 }
 
 void Server::send_to_user(const std::string& username, const std::string& json_text) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    auto it = online_.find(username);
-    if (it != online_.end()) {
+    std::lock_guard<std::mutex> lk(online_users_mutex_);
+    auto it = online_user_sessions_.find(username);
+    if (it != online_user_sessions_.end()) {
         it->second->deliver(json_text);
         Logger::instance().debug("Sent message to user", { {"to", username}, {"len", static_cast<uint64_t>(json_text.size())} });
     } else {
@@ -80,20 +80,20 @@ void Server::send_to_user(const std::string& username, const std::string& json_t
 void Server::broadcast_user_list() {
     json j;
     {
-        std::lock_guard<std::mutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(online_users_mutex_);
         j["type"] = "user_list";
         j["users"] = json::array();
-        for (auto& kv : online_) {
+        for (auto& kv : online_user_sessions_) {
             j["users"].push_back(kv.first);
         }
     }
-    broadcast(j.dump());  // The lock mtx_ is no longer held here
+    broadcast(j.dump());  // The lock online_users_mutex_ is no longer held here
 }
 
 std::vector<std::string> Server::online_usernames() {
-    std::lock_guard<std::mutex> lk(mtx_);
+    std::lock_guard<std::mutex> lk(online_users_mutex_);
     std::vector<std::string> out;
-    out.reserve(online_.size());
-    for (auto& kv : online_) out.push_back(kv.first);
+    out.reserve(online_user_sessions_.size());
+    for (auto& kv : online_user_sessions_) out.push_back(kv.first);
     return out;
 }
