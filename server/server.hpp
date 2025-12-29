@@ -1,4 +1,4 @@
-﻿// server.hpp
+// server.hpp
 #pragma once
 #include <boost/asio.hpp>
 #include <memory>
@@ -24,14 +24,14 @@ public:
     void broadcast_user_list();
     std::vector<std::string> online_usernames();
 
-    UserStore& user_store() { return users_; }
+    UserStore& user_store() { return user_store_; }
     MessageStore& message_store() { return msg_store_; }
 
 private:
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context& ioc_;
-    std::mutex mtx_;
-    std::unordered_map<std::string, std::shared_ptr<Session>> online_;
-    UserStore users_;
+    std::mutex online_users_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<Session>> online_user_sessions_;
+    UserStore user_store_;
     MessageStore msg_store_;
 };
