@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <memory>
 #include <boost/asio.hpp>
 #include <deque>
@@ -25,7 +25,7 @@ private:
     boost::asio::ip::tcp::socket socket_;
     Server& server_;
     std::vector<uint8_t> header_buf_;
-    std::vector<uint8_t> body_buf_;
-    std::deque<std::vector<uint8_t>> write_queue_;
-    std::string username_;
+    std::vector<uint8_t> message_body_buffer_;
+    std::deque<std::vector<uint8_t>> outgoing_message_queue_;
+    std::string session_username_;
 };
