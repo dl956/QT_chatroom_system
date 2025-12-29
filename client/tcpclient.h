@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -41,9 +41,9 @@ private slots:
     void sendHeartbeat();
 
 private:
-    void processFrame(const QByteArray& payload);
+    void processFrame(const QByteArray& framePayload);
     QTcpSocket socket_;
-    QByteArray buffer_;
+    QByteArray receiveBuffer_;
     MessageModel* model = nullptr;
     QTimer heartbeatTimer_;
 };
